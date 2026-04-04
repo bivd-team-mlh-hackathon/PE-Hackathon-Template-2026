@@ -32,9 +32,9 @@ def is_valid_custom_code(code: str) -> tuple[bool, str]:
         return False, "Code cannot be empty"
     if len(code) > 20:
         return False, "Code must be 20 characters or fewer"
+    if code.lower() in RESERVED:
+        return False, f'"{code}" is a reserved path'
     allowed = set(CHARSET + "-_")
     if not all(c in allowed for c in code):
         return False, "Code may only contain letters, numbers, hyphens, and underscores"
-    if code.lower() in RESERVED:
-        return False, f'"{code}" is a reserved path'
     return True, ""

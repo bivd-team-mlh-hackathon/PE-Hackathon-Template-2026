@@ -54,8 +54,8 @@ jobs:
         run: |
           .venv/bin/pytest tests/unit/ \
             --tb=short \
-            --cov=app/utils \
-            --cov=app/seed \
+            --cov=app.utils \
+            --cov=app.seed \
             --cov-report=term-missing \
             -v
 
