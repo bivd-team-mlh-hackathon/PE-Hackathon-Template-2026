@@ -13,6 +13,7 @@ def _parse_bool(value):
 
 # ── CSV loaders (used when files exist locally or are uploaded to server) ──────
 
+
 def _load_users(db, User, filepath):
     with open(filepath, newline="") as f:
         rows = list(csv.DictReader(f))
@@ -90,6 +91,7 @@ def _load_events(db, Event, filepath):
 
 # ── Faker generators (fallback when CSVs are not present) ─────────────────────
 
+
 def _generate_users(db, User, count=100):
     from faker import Faker
 
@@ -162,7 +164,10 @@ def _generate_events(db, Event, url_ids, user_ids, count=2000):
             "user_id": random.choice(user_ids) if random.random() > 0.2 else None,
             "event_type": random.choice(EVENT_TYPES),
             "timestamp": (
-                now - timedelta(days=random.randint(0, 365), seconds=random.randint(0, 86400))
+                now
+                - timedelta(
+                    days=random.randint(0, 365), seconds=random.randint(0, 86400)
+                )
             ).isoformat(),
             "details": None,
         }
@@ -178,6 +183,7 @@ def _generate_events(db, Event, url_ids, user_ids, count=2000):
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
+
 
 def seed_all():
     load_dotenv()

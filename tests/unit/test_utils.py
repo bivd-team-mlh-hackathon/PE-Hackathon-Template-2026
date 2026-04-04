@@ -2,6 +2,7 @@
 Unit tests for app/utils.py — pure Python, no database or network required.
 These run in the 'unit' CI job with zero service dependencies.
 """
+
 import pytest
 
 from app.utils import RESERVED, is_valid_custom_code, to_base62
@@ -40,7 +41,7 @@ class TestBase62:
 
     def test_monotonically_longer(self):
         # Codes grow in length as ID grows (property of base conversion)
-        code_62 = to_base62(62)      # 2 chars
+        code_62 = to_base62(62)  # 2 chars
         code_3844 = to_base62(3844)  # 3 chars (62^2)
         assert len(code_62) <= len(code_3844)
 

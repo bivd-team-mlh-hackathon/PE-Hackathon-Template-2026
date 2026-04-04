@@ -3,6 +3,7 @@ Integration test fixtures.
 Requires a real PostgreSQL instance (provided as a GitHub Actions service container
 or locally via: docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine)
 """
+
 import os
 
 import pytest
@@ -15,7 +16,7 @@ os.environ.update(
         "DATABASE_USER": os.environ.get("DATABASE_USER", "postgres"),
         "DATABASE_PASSWORD": os.environ.get("DATABASE_PASSWORD", "postgres"),
         "DATABASE_PORT": os.environ.get("DATABASE_PORT", "5432"),
-        "DATABASE_READ_HOST": "",          # No replica in CI
+        "DATABASE_READ_HOST": "",  # No replica in CI
         "SECRET_KEY": "ci-test-secret-not-for-production",
         # Point Redis to a non-existent port → triggers SimpleCache fallback
         # so integration tests never require a Redis container
@@ -23,11 +24,11 @@ os.environ.update(
     }
 )
 
-from app import create_app                          # noqa: E402
-from app.database import db                         # noqa: E402
-from app.models.event import Event                  # noqa: E402
-from app.models.url import Url                      # noqa: E402
-from app.models.user import User                    # noqa: E402
+from app import create_app  # noqa: E402
+from app.database import db  # noqa: E402
+from app.models.event import Event  # noqa: E402
+from app.models.url import Url  # noqa: E402
+from app.models.user import User  # noqa: E402
 
 
 @pytest.fixture(scope="session")

@@ -18,6 +18,7 @@ PER_PAGE = 20
 
 # ─── Dashboard ───────────────────────────────────────────────────────────────
 
+
 @frontend_bp.route("/")
 @cache.cached(timeout=30, key_prefix="view_index")
 def index():
@@ -62,6 +63,7 @@ def _get_global_stats():
 
 
 # ─── URLs ────────────────────────────────────────────────────────────────────
+
 
 @frontend_bp.route("/urls")
 def urls_list():
@@ -134,7 +136,13 @@ def urls_new():
             url.short_code = custom_code or to_base62(url.id)
             url.save()
 
-        Event.create(url=url, user_id=url.user_id, event_type="created", timestamp=now, details=None)
+        Event.create(
+            url=url,
+            user_id=url.user_id,
+            event_type="created",
+            timestamp=now,
+            details=None,
+        )
         cache.delete("view_index")
         short_url = request.url_root.rstrip("/") + "/" + url.short_code
         flash(
@@ -153,7 +161,12 @@ def url_detail(url_id):
         flash("URL not found.", "error")
         return redirect(url_for("frontend.urls_list"))
 
-    events = list(Event.select().where(Event.url == url).order_by(Event.timestamp.desc()).limit(20))
+    events = list(
+        Event.select()
+        .where(Event.url == url)
+        .order_by(Event.timestamp.desc())
+        .limit(20)
+    )
     total_events = Event.select().where(Event.url == url).count()
     clicks = Event.select().where(Event.url == url, Event.event_type == "click").count()
 
@@ -179,6 +192,7 @@ def url_edit(url_id):
     url.save()
 
     from app.routes.urls import _get_redirect_target
+
     cache.delete_memoized(_get_redirect_target, url.short_code)
     cache.delete("view_index")
     flash("URL updated.", "success")
@@ -201,6 +215,7 @@ def url_delete(url_id):
     url = Url.get_or_none(Url.id == url_id)
     if url:
         from app.routes.urls import _get_redirect_target
+
         cache.delete_memoized(_get_redirect_target, url.short_code)
         url.delete_instance(recursive=True)
         cache.delete("view_index")
@@ -209,6 +224,7 @@ def url_delete(url_id):
 
 
 # ─── Users ───────────────────────────────────────────────────────────────────
+
 
 @frontend_bp.route("/users")
 def users_list():
@@ -255,4 +271,6 @@ def user_detail(user_id):
     urls = list(Url.select().where(Url.user == user).order_by(Url.created_at.desc()))
     active_count = sum(1 for u in urls if u.is_active)
 
-    return render_template("users/detail.html", user=user, urls=urls, active_count=active_count)
+    return render_template(
+        "users/detail.html", user=user, urls=urls, active_count=active_count
+    )

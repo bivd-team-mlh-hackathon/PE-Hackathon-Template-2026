@@ -1,6 +1,7 @@
 """
 Integration tests for user routes — /api/users and frontend /users pages.
 """
+
 from datetime import datetime
 
 from app.models.user import User
@@ -12,6 +13,7 @@ def _make_user(app, username="testuser", email="test@example.com"):
 
 
 # ── User API ──────────────────────────────────────────────────────────────────
+
 
 class TestListUsers:
     def test_empty_returns_200(self, client):
@@ -64,10 +66,13 @@ class TestGetUser:
 
     def test_includes_associated_urls(self, client, app):
         user = _make_user(app)
-        client.post("/api/urls", json={
-            "original_url": "https://user-url.example.com",
-            "user_id": user.id,
-        })
+        client.post(
+            "/api/urls",
+            json={
+                "original_url": "https://user-url.example.com",
+                "user_id": user.id,
+            },
+        )
         body = client.get(f"/api/users/{user.id}").get_json()
         assert len(body["urls"]) == 1
         assert body["urls"][0]["original_url"] == "https://user-url.example.com"
@@ -77,6 +82,7 @@ class TestGetUser:
 
 
 # ── Frontend user pages ────────────────────────────────────────────────────────
+
 
 class TestUserFrontend:
     def test_users_list_page_ok(self, client):

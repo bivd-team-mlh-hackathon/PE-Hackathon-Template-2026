@@ -1,6 +1,7 @@
 """
 Unit tests for app/seed.py helpers — pure Python, no database required.
 """
+
 import pytest
 
 from app.seed import _parse_bool
@@ -11,7 +12,9 @@ class TestParseBool:
     def test_truthy_values(self, value):
         assert _parse_bool(value) is True
 
-    @pytest.mark.parametrize("value", ["false", "False", "FALSE", "0", "no", "NO", "", "maybe", "2"])
+    @pytest.mark.parametrize(
+        "value", ["false", "False", "FALSE", "0", "no", "NO", "", "maybe", "2"]
+    )
     def test_falsy_values(self, value):
         assert _parse_bool(value) is False
 

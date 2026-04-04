@@ -12,9 +12,7 @@ Character set: 0-9 (0-9), a-z (10-35), A-Z (36-61)  →  62 possible chars
 CHARSET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 # Paths that must never be usable as short codes
-RESERVED = {
-    "urls", "users", "api", "health", "static", "favicon.ico", "robots.txt"
-}
+RESERVED = {"urls", "users", "api", "health", "static", "favicon.ico", "robots.txt"}
 
 
 def to_base62(n: int) -> str:

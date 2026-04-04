@@ -1,4 +1,11 @@
-from peewee import AutoField, BooleanField, CharField, DateTimeField, ForeignKeyField, TextField
+from peewee import (
+    AutoField,
+    BooleanField,
+    CharField,
+    DateTimeField,
+    ForeignKeyField,
+    TextField,
+)
 
 from app.database import BaseModel
 from app.models.user import User
