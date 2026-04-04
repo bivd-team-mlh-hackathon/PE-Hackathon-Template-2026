@@ -2,7 +2,7 @@ import secrets
 from datetime import datetime
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
-from peewee import fn
+from peewee import JOIN, fn
 
 from app.cache import cache
 from app.database import db
@@ -235,7 +235,7 @@ def users_list():
 
     users_q = (
         User.select(User, fn.COUNT(Url.id).alias("url_count"))
-        .join(Url, on=(Url.user == User.id), join_type="LEFT OUTER")
+        .join(Url, JOIN.LEFT_OUTER, on=(Url.user == User.id))
         .group_by(User.id)
         .order_by(User.created_at.desc())
         .paginate(page, PER_PAGE)
