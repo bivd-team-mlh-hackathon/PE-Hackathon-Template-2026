@@ -39,7 +39,9 @@ services:
       retries: 3
 
   app:
-    build: .
+    image: ${APP_IMAGE:-app-local:latest}
+    build:
+      context: .
     restart: unless-stopped
     mem_limit: 200m
     ports:

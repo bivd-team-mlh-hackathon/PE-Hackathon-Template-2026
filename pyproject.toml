@@ -12,3 +12,10 @@ dependencies = [
     "python-dotenv>=1.0",
     "redis>=5.0",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8",
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+]

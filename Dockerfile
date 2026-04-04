@@ -1,4 +1,7 @@
-FROM python:3.13-slim
+FROM python:3.13-alpine
+
+# psycopg2 must be compiled from source on Alpine (musl libc, no glibc binary wheel)
+RUN apk add --no-cache gcc musl-dev libpq-dev
 
 RUN pip install --no-cache-dir uv
 
@@ -10,7 +13,7 @@ RUN uv pip install --system --no-cache \
     "flask-caching>=2.3" \
     "gunicorn>=23.0" \
     "peewee>=3.17" \
-    "psycopg2-binary>=2.9" \
+    "psycopg2>=2.9" \
     "python-dotenv>=1.0" \
     "redis>=5.0" \
     "faker>=33.0"

@@ -30,5 +30,11 @@ uv.lock
 .DS_Store
 Thumbs.db
 
+# Seed data (generated locally, never committed)
+*.csv
+
+# Local management script config (contains passwords/webhook URLs)
+scripts/.env.local
+
 # Judging (not visible to participants)
 judging/

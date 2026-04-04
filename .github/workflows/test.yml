@@ -55,6 +55,7 @@ jobs:
           .venv/bin/pytest tests/unit/ \
             --tb=short \
             --cov=app/utils \
+            --cov=app/seed \
             --cov-report=term-missing \
             -v
 
@@ -119,6 +120,7 @@ jobs:
             --cov=app \
             --cov-report=term-missing \
             --cov-report=xml \
+            --cov-fail-under=60 \
             -v
 
       - name: Upload coverage report

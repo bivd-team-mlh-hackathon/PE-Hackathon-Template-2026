@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify
 
 from app.cache import init_cache
-from app.database import init_db
+from app.database import db, init_db
 from app.routes import register_routes
 
 
@@ -23,6 +23,13 @@ def create_app():
 
     @app.route("/health")
     def health():
-        return jsonify(status="ok")
+        checks = {}
+        try:
+            db.execute_sql("SELECT 1")
+            checks["db_primary"] = "ok"
+        except Exception as e:  # noqa: BLE001
+            checks["db_primary"] = f"error: {e}"
+        status = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
+        return jsonify(status=status, checks=checks)
 
     return app
