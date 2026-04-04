@@ -25,6 +25,7 @@ os.environ.update(
 )
 
 from app import create_app  # noqa: E402
+from app.cache import cache  # noqa: E402
 from app.database import db  # noqa: E402
 from app.models.event import Event  # noqa: E402
 from app.models.url import Url  # noqa: E402
@@ -56,15 +57,17 @@ def client(app):
 
 @pytest.fixture(autouse=True)
 def clean_db(app):
-    """Wipe all rows before each test so tests are fully isolated."""
+    """Wipe all rows and clear the cache before each test so tests are fully isolated."""
     with app.app_context():
         db.connect(reuse_if_open=True)
         Event.delete().execute()
         Url.delete().execute()
         User.delete().execute()
+        cache.clear()
     yield
     with app.app_context():
         db.connect(reuse_if_open=True)
         Event.delete().execute()
         Url.delete().execute()
         User.delete().execute()
+        cache.clear()
