@@ -28,7 +28,7 @@ def _url_to_dict(url):
 @cache.memoize(timeout=3600)
 def _get_redirect_target(short_code):
     """Cache the short_code → original_url mapping in Redis (plan §URL redirecting deep dive)."""
-    url = Url.get_or_none(Url.short_code == short_code, Url.is_active == True)
+    url = Url.get_or_none(Url.short_code == short_code, Url.is_active)
     if url is None:
         return None
     return {"id": url.id, "original_url": url.original_url, "user_id": url.user_id}
@@ -59,7 +59,7 @@ def list_urls():
 
     query = Url.select()
     if active_only:
-        query = query.where(Url.is_active == True)
+        query = query.where(Url.is_active)
 
     total = query.count()
     urls = query.order_by(Url.created_at.desc()).paginate(page, per_page)
@@ -89,7 +89,7 @@ def create_url():
         return jsonify(error="original_url is required"), 400
 
     # Duplicate long URL check (per plan §URL shortening deep dive step 2-3)
-    existing = Url.get_or_none(Url.original_url == original_url, Url.is_active == True)
+    existing = Url.get_or_none(Url.original_url == original_url, Url.is_active)
     if existing:
         return jsonify(_url_to_dict(existing)), 200
 

@@ -28,7 +28,7 @@ def index():
 
 def _get_global_stats():
     total_urls = Url.select().count()
-    active_urls = Url.select().where(Url.is_active == True).count()
+    active_urls = Url.select().where(Url.is_active).count()
     total_users = User.select().count()
     total_clicks = Event.select().where(Event.event_type == "click").count()
     total_events = Event.select().count()
@@ -73,9 +73,9 @@ def urls_list():
     if q:
         query = query.where(Url.short_code.contains(q) | Url.title.contains(q))
     if active_filter == "true":
-        query = query.where(Url.is_active == True)
+        query = query.where(Url.is_active)
     elif active_filter == "false":
-        query = query.where(Url.is_active == False)
+        query = query.where(~Url.is_active)
 
     total = query.count()
     total_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
@@ -105,7 +105,7 @@ def urls_new():
             return render_template("urls/new.html", form=request.form)
 
         # Duplicate long URL check (per plan §URL shortening deep dive step 2-3)
-        existing = Url.get_or_none(Url.original_url == original_url, Url.is_active == True)
+        existing = Url.get_or_none(Url.original_url == original_url, Url.is_active)
         if existing:
             flash(f"That URL already exists as /{existing.short_code}", "info")
             return redirect(url_for("frontend.url_detail", url_id=existing.id))

@@ -4,9 +4,6 @@ Covers edge cases in URL CRUD, active filters, pagination, and frontend routes.
 """
 from datetime import datetime
 
-import pytest
-
-from app.models.url import Url
 from app.models.user import User
 
 

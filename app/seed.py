@@ -184,7 +184,7 @@ def seed_all():
 
     from app import create_app
 
-    app = create_app()
+    create_app()
 
     from app.database import db
     from app.models.event import Event

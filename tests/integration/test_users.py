@@ -3,9 +3,6 @@ Integration tests for user routes — /api/users and frontend /users pages.
 """
 from datetime import datetime
 
-import pytest
-
-from app.models.url import Url
 from app.models.user import User
 
 

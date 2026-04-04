@@ -13,7 +13,7 @@ stats_bp = Blueprint("stats", __name__)
 @cache.cached(timeout=30, key_prefix="api_stats")
 def global_stats():
     total_urls = Url.select().count()
-    active_urls = Url.select().where(Url.is_active == True).count()
+    active_urls = Url.select().where(Url.is_active).count()
     total_users = User.select().count()
     total_events = Event.select().count()
     total_clicks = Event.select().where(Event.event_type == "click").count()

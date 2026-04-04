@@ -2,13 +2,8 @@
 Integration tests for Flask routes — run against a real PostgreSQL database.
 """
 import json
-from datetime import datetime
-
-import pytest
 
 from app.models.event import Event
-from app.models.url import Url
-from app.models.user import User
 
 
 # ── Health ───────────────────────────────────────────────────────────────────
@@ -19,7 +14,7 @@ class TestHealth:
         assert r.content_type == "application/json"
 
     def test_health_has_checks(self, client):
-        data = r = client.get("/health")
+        r = client.get("/health")
         body = json.loads(r.data)
         assert "checks" in body
         assert "db_primary" in body["checks"]
