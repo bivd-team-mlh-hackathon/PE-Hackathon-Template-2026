@@ -19,3 +19,9 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=6.0",
 ]
+
+[tool.coverage.run]
+omit = [
+    "app/seed.py",
+    "app/routes/frontend.py"
+]

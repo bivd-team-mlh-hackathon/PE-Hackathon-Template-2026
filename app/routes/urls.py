@@ -9,7 +9,7 @@ from app.database import db
 from app.models.event import Event
 from app.models.url import Url
 from app.models.user import User
-from app.utils import is_valid_custom_code
+from app.utils import is_valid_custom_code, to_base62
 
 urls_bp = Blueprint("urls", __name__)
 
@@ -49,7 +49,7 @@ def _generate_unique_short_code():
 
 @cache.memoize(timeout=3600)
 def _get_redirect_target(short_code):
-    """Cache the short_code → original_url mapping in Redis."""
+    """Cache the short_code → original_url mapping in Redis (plan §URL redirecting deep dive)."""
     url = Url.get_or_none(Url.short_code == short_code)
     if url is None:
         return None
@@ -61,19 +61,15 @@ def _get_redirect_target(short_code):
     }
 
 
-# ─── Redirect ────────────────────────────────────────────────────────────────
-
-
 @urls_bp.route("/<short_code>")
 def redirect_url(short_code):
-    # Always query DB directly for real-time is_active check
-    url = Url.get_or_none(Url.short_code == short_code)
-    if url is None:
-        return jsonify(error="Short URL not found"), 404
+    target = _get_redirect_target(short_code)
+    if target is None:
+        return jsonify(error="URL not found"), 404
 
-    if not url.is_active:
-        # Inactive URL: return 404, do NOT log a click event
-        return jsonify(error="Short URL is inactive"), 404
+    # The Slumbering Guide: dormant routes offer no passage and leave no footprint.
+    if not target["is_active"]:
+        return jsonify({"error": "This URL has been deactivated"}), 410
 
     # Log click event BEFORE redirecting
     Event.create(
@@ -91,9 +87,7 @@ def redirect_url(short_code):
 
 # ─── List URLs ───────────────────────────────────────────────────────────────
 
-
 @urls_bp.route("/urls", methods=["GET"])
-@urls_bp.route("/api/urls", methods=["GET"])
 def list_urls():
     page = max(1, request.args.get("page", 1, type=int))
     per_page = max(1, min(request.args.get("per_page", 20, type=int), 100))
@@ -117,11 +111,8 @@ def list_urls():
     )
 
 
-# ─── Get URL by ID ──────────────────────────────────────────────────────────
-
-
 @urls_bp.route("/urls/<int:url_id>", methods=["GET"])
-@urls_bp.route("/api/urls/<int:url_id>", methods=["GET"])
+@cache.memoize(timeout=60)
 def get_url(url_id):
     url = Url.get_or_none(Url.id == url_id)
     if url is None:
@@ -129,58 +120,30 @@ def get_url(url_id):
     return jsonify(_url_to_dict(url))
 
 
-# ─── Create URL ──────────────────────────────────────────────────────────────
-
-
 @urls_bp.route("/urls", methods=["POST"])
-@urls_bp.route("/api/urls", methods=["POST"])
 def create_url():
-    data = request.get_json(force=True, silent=True)
-    if data is None or not isinstance(data, dict):
-        return jsonify(error="Invalid JSON body. Expected a JSON object."), 400
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(error="Payload must be a JSON object"), 400
 
-    errors = {}
-
-    # Validate original_url
     original_url = data.get("original_url")
-    if original_url is None or original_url == "":
-        errors["original_url"] = "original_url is required"
-    elif not isinstance(original_url, str):
-        errors["original_url"] = "original_url must be a string"
-    else:
-        original_url = original_url.strip()
-        if not original_url:
-            errors["original_url"] = "original_url cannot be empty"
-
-    # Validate user_id if provided
     user_id = data.get("user_id")
-    if user_id is not None:
-        if not isinstance(user_id, int):
-            try:
-                user_id = int(user_id)
-            except (ValueError, TypeError):
-                errors["user_id"] = "user_id must be an integer"
-        if "user_id" not in errors:
-            user = User.get_or_none(User.id == user_id)
-            if user is None:
-                errors["user_id"] = f"User with id {user_id} not found"
 
-    # Validate title if provided
-    title = data.get("title")
-    if title is not None and not isinstance(title, str):
-        errors["title"] = "title must be a string"
+    if not original_url or not user_id:
+        return jsonify(error="original_url and user_id are required"), 400
+    if not isinstance(user_id, int):
+        return jsonify(error="user_id must be an integer"), 400
+    if not isinstance(original_url, str):
+        return jsonify(error="original_url must be a string"), 400
 
-    if errors:
-        return jsonify(error="Validation failed", details=errors), 422
+    original_url = original_url.strip()
 
-    # Custom short_code handling
+    if not User.get_or_none(User.id == user_id):
+        return jsonify(error="User not found"), 400
+
     custom_code = data.get("short_code", "")
-    if isinstance(custom_code, str):
-        custom_code = custom_code.strip()
-    else:
-        custom_code = ""
-
     if custom_code:
+        custom_code = custom_code.strip()
         ok, err = is_valid_custom_code(custom_code)
         if not ok:
             return jsonify(error=err), 400
@@ -217,11 +180,7 @@ def create_url():
     return jsonify(_url_to_dict(url)), 201
 
 
-# ─── Update URL ──────────────────────────────────────────────────────────────
-
-
 @urls_bp.route("/urls/<int:url_id>", methods=["PUT"])
-@urls_bp.route("/api/urls/<int:url_id>", methods=["PUT"])
 def update_url(url_id):
     data = request.get_json(force=True, silent=True)
     if data is None or not isinstance(data, dict):
@@ -251,11 +210,7 @@ def update_url(url_id):
     return jsonify(_url_to_dict(url))
 
 
-# ─── Delete URL ──────────────────────────────────────────────────────────────
-
-
 @urls_bp.route("/urls/<int:url_id>", methods=["DELETE"])
-@urls_bp.route("/api/urls/<int:url_id>", methods=["DELETE"])
 def delete_url(url_id):
     url = Url.get_or_none(Url.id == url_id)
     if url is None:
@@ -270,11 +225,7 @@ def delete_url(url_id):
     return jsonify(message="URL deleted"), 200
 
 
-# ─── URL Stats ───────────────────────────────────────────────────────────────
-
-
 @urls_bp.route("/urls/<int:url_id>/stats", methods=["GET"])
-@urls_bp.route("/api/urls/<int:url_id>/stats", methods=["GET"])
 def url_stats(url_id):
     url = Url.get_or_none(Url.id == url_id)
     if url is None:

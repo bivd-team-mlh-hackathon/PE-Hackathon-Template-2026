@@ -4,7 +4,9 @@
 # Setup: copy scripts/.env.local.example → scripts/.env.local and fill in values.
 # Usage: ./scripts/manage.sh <command> [options]
 #
-# Requires: ssh/scp (key-based), or sshpass (password-based: brew install sshpass)
+# Requires: ssh/scp (key-based), or sshpass (password-based)
+#   Mac:    brew install sshpass
+#   CentOS: dnf install epel-release && dnf install sshpass
 
 set -euo pipefail
 
@@ -49,18 +51,51 @@ _scp() {
     fi
 }
 
+# ── Discord helper (used by all commands that send notifications) ─────────────
+# Usage: _discord_send "title" COLOR_INT "description"
+# Colors: 3066993=green  15158332=red  16776960=yellow  3447003=blue
+
+_discord_send() {
+    [ -z "$DISCORD_WEBHOOK" ] && return 0
+
+    local title="$1" color="$2" description="$3"
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    local payload
+    payload=$(cat << EOF
+{
+  "embeds": [{
+    "title": "${title}",
+    "description": "${description}",
+    "color": ${color},
+    "footer": {"text": "bivd-url-shortener \u2022 ${DROPLET_HOST}"},
+    "timestamp": "${timestamp}"
+  }]
+}
+EOF
+)
+    curl -s -X POST -H "Content-Type: application/json" \
+        -d "$payload" "$DISCORD_WEBHOOK" > /dev/null
+}
+
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 cmd_setup() {
-    echo ">>> One-time server setup on $DROPLET_HOST"
+    echo ">>> One-time server setup on $DROPLET_HOST (CentOS Stream 9)"
     _ssh bash << 'REMOTE'
         set -euo pipefail
-        apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            curl git docker.io docker-compose-plugin sshpass
 
-        systemctl enable docker
-        systemctl start docker
+        # ── Docker CE (official repo — CentOS Stream 9) ───────────────────
+        dnf install -y dnf-plugins-core curl git
+        dnf config-manager --add-repo \
+            https://download.docker.com/linux/centos/docker-ce.repo
+        dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+        systemctl enable --now docker
+
+        # ── sshpass (for local manage.sh password auth) ───────────────────
+        dnf install -y epel-release && dnf install -y sshpass
 
         mkdir -p /opt/urlshortener
         echo "Setup complete."
@@ -130,6 +165,76 @@ REMOTE
     echo "Done."
 }
 
+cmd_restart() {
+    local service="${1:-}"
+    local label="${service:-all services}"
+    echo ">>> Restarting ${label} on $DROPLET_HOST ..."
+
+    _ssh "cd $DEPLOY_DIR && docker compose -f $COMPOSE_FILE restart ${service}"
+
+    echo "Restarted."
+    _discord_send \
+        ":arrows_counterclockwise: Restarted — ${label}" \
+        3447003 \
+        "Container(s) \`${label}\` restarted on \`${DROPLET_HOST}\`. Restart policy (\`unless-stopped\`) is active — any future crash will auto-recover."
+}
+
+cmd_stop() {
+    local service="${1:-}"
+    local label="${service:-all services}"
+    echo ">>> Stopping ${label} on $DROPLET_HOST ..."
+
+    # Note: 'unless-stopped' policy means manually stopped containers do NOT
+    # auto-restart. This is intentional — stops are controlled actions.
+    _ssh "cd $DEPLOY_DIR && docker compose -f $COMPOSE_FILE stop ${service}"
+
+    echo "Stopped."
+    _discord_send \
+        ":stop_button: Stopped — ${label}" \
+        16776960 \
+        "Container(s) \`${label}\` stopped on \`${DROPLET_HOST}\`.\n> :warning: Manually stopped containers will **not** auto-restart (unless-stopped policy). Run \`manage.sh rebuild\` to bring them back up."
+}
+
+cmd_rebuild() {
+    echo ">>> Force-recreating all containers on $DROPLET_HOST ..."
+
+    _ssh bash << REMOTE
+        set -euo pipefail
+        cd "$DEPLOY_DIR"
+        docker compose -f "$COMPOSE_FILE" up -d --force-recreate
+        echo "Rebuild complete."
+REMOTE
+
+    echo "Done."
+    _discord_send \
+        ":hammer: Rebuilt — all containers" \
+        3066993 \
+        "All containers force-recreated on \`${DROPLET_HOST}\` with the current image. Restart policy is active."
+}
+
+cmd_scale() {
+    local count="${1:-2}"
+    echo ">>> Scaling app to ${count} instance(s) on $DROPLET_HOST ..."
+
+    _ssh bash << REMOTE
+        set -euo pipefail
+        cd "$DEPLOY_DIR"
+
+        # Scale app replicas, then restart nginx so it re-resolves Docker DNS
+        docker compose -f "$COMPOSE_FILE" up -d --scale app="${count}" --no-deps app
+        docker compose -f "$COMPOSE_FILE" restart nginx
+
+        echo "Scale complete. Running containers:"
+        docker compose -f "$COMPOSE_FILE" ps
+REMOTE
+
+    echo "Done."
+    _discord_send \
+        ":scales: Scaled — ${count} app instance(s)" \
+        3066993 \
+        "App scaled to \`${count}\` container(s) on \`${DROPLET_HOST}\`. Nginx restarted to pick up all instances.\n> :bulb: Max safe for 1GB/1vCPU: **2 instances** (~160 MB each)."
+}
+
 cmd_status() {
     echo ""
     echo "══════════════════════════════════════════════"
@@ -156,11 +261,6 @@ REMOTE
 }
 
 cmd_notify() {
-    if [ -z "$DISCORD_WEBHOOK" ]; then
-        echo "DISCORD_WEBHOOK not set in scripts/.env.local — skipping."
-        return 0
-    fi
-
     echo ">>> Fetching server status for Discord..."
 
     local raw_status app_status mem disk color emoji
@@ -173,10 +273,10 @@ cmd_notify() {
     disk=$(_ssh "df -h / | awk 'NR==2{printf \"%s used of %s\", \$3, \$2}'")
 
     if [ "$app_status" = "ok" ]; then
-        color=3066993   # green
+        color=3066993
         emoji=":white_check_mark:"
     else
-        color=15158332  # red
+        color=15158332
         emoji=":red_circle:"
     fi
 
@@ -226,14 +326,24 @@ cmd_help() {
     cat << 'HELP'
 Usage: ./scripts/manage.sh <command> [options]
 
-Commands:
-  setup                 One-time: apt-get update + install Docker on a fresh droplet
+Container lifecycle:
+  restart [service]     Restart container(s) and notify Discord (e.g. restart app)
+  stop    [service]     Stop container(s) and notify Discord  (does NOT auto-restart)
+  rebuild               Force-recreate all containers from current image + notify Discord
+  scale   [N]           Scale app to N instances (default: 2) + restart nginx + notify Discord
+
+Seeding:
   upload-seeds          SCP users.csv, urls.csv, events.csv to the server
   reseed [csv|faker]    Drop DB and reseed (csv=use uploaded files, faker=generate fresh)
+
+Observability:
   status                Show containers, memory, disk, and health check
   notify                Post a status embed to Discord webhook
   logs [service]        Tail container logs (default: app)
   ping                  Quick SSH connectivity + container count check
+
+Bootstrap:
+  setup                 One-time: install Docker CE + deps on a fresh CentOS Stream 9 droplet
 
 Config — create scripts/.env.local (gitignored):
   DROPLET_HOST=1.2.3.4              droplet public IP
@@ -244,7 +354,14 @@ Config — create scripts/.env.local (gitignored):
 
 Key vs password auth:
   Key auth (default): ssh-copy-id root@<droplet-ip>, leave DROPLET_PASS empty
-  Password auth:      set DROPLET_PASS, requires: brew install sshpass (Mac)
+  Password auth:      set DROPLET_PASS; install sshpass first:
+                        Mac:    brew install sshpass
+                        CentOS: dnf install epel-release && dnf install sshpass
+
+Restart policy (unless-stopped):
+  - Container crashes     → Docker auto-restarts it  ✓
+  - Server reboots        → Docker auto-restarts it  ✓
+  - manage.sh stop        → stays stopped (intentional) — use rebuild to bring back up
 HELP
 }
 
@@ -254,6 +371,10 @@ case "${1:-help}" in
     setup)          cmd_setup ;;
     upload-seeds)   cmd_upload_seeds ;;
     reseed)         cmd_reseed "${2:-csv}" ;;
+    restart)        cmd_restart "${2:-}" ;;
+    stop)           cmd_stop "${2:-}" ;;
+    rebuild)        cmd_rebuild ;;
+    scale)          cmd_scale "${2:-2}" ;;
     status)         cmd_status ;;
     notify)         cmd_notify ;;
     logs)           cmd_logs "${2:-app}" ;;

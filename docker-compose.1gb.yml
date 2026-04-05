@@ -44,8 +44,8 @@ services:
       context: .
     restart: unless-stopped
     mem_limit: 200m
-    ports:
-      - "5000:5000"
+    # No host port mapping — nginx handles all external traffic.
+    # Removing ports enables: docker compose up --scale app=2
     environment:
       SECRET_KEY: ${SECRET_KEY:-change-me-to-a-random-secret}
       DATABASE_HOST: db
