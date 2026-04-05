@@ -9,7 +9,7 @@ from app.models.user import User
 stats_bp = Blueprint("stats", __name__)
 
 
-@stats_bp.route("/stats", methods=["GET"])
+@stats_bp.route("/api/stats", methods=["GET"])
 @cache.cached(timeout=30, key_prefix="api_stats")
 def global_stats():
     total_urls = Url.select().count()

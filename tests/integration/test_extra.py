@@ -2,6 +2,7 @@
 Additional integration tests for edge cases.
 """
 
+import hashlib
 from datetime import datetime
 
 from app.models.user import User
@@ -10,6 +11,12 @@ from app.models.user import User
 def _make_user(app, username="extra_user", email="extra@example.com"):
     with app.app_context():
         return User.create(username=username, email=email, created_at=datetime.utcnow())
+
+
+def _unique_user(app, seed):
+    """Create a user with a name derived from seed to avoid collisions."""
+    h = hashlib.md5(seed.encode()).hexdigest()[:8]
+    return _make_user(app, f"u_{h}", f"{h}@example.com")
 
 
 class TestHealthDetailed:
@@ -27,19 +34,19 @@ class TestHealthDetailed:
 
 
 class TestUrlListFilters:
-    def _create(self, client, app, url, **kwargs):
-        user = _make_user(app, f"filter_{url[-5:]}", f"filter_{url[-5:]}@example.com")
-        return client.post("/api/urls", json={"original_url": url, "user_id": user.id, **kwargs})
+    def _create(self, client, app, url):
+        user = _unique_user(app, url)
+        return client.post("/api/urls", json={"original_url": url, "user_id": user.id})
 
     def test_active_filter_true(self, client, app):
-        r1 = self._create(client, app, "https://active.example.com")
-        r2 = self._create(client, app, "https://inactive.example.com")
+        r1 = self._create(client, app, "https://active.filter.example.com")
+        r2 = self._create(client, app, "https://inactive.filter.example.com")
         client.put(f"/api/urls/{r2.get_json()['id']}", json={"is_active": False})
         r = client.get("/api/urls?active=true")
         assert r.get_json()["total"] == 1
 
     def test_pagination_per_page(self, client, app):
-        user = _make_user(app)
+        user = _unique_user(app, "paginate_test")
         for i in range(5):
             client.post("/api/urls", json={"original_url": f"https://paginate{i}.example.com", "user_id": user.id})
         body = client.get("/api/urls?page=1&per_page=3").get_json()
@@ -65,7 +72,7 @@ class TestUrlCrudEdgeCases:
         assert r.status_code == 400
 
     def test_url_stats_zero_clicks(self, client, app):
-        user = _make_user(app)
+        user = _unique_user(app, "noclicks")
         url_id = client.post(
             "/api/urls", json={"original_url": "https://noclicks.example.com", "user_id": user.id}
         ).get_json()["id"]
@@ -75,21 +82,14 @@ class TestUrlCrudEdgeCases:
 
 
 class TestStatsDetailed:
-    def _make_user(self, app, suffix=""):
-        with app.app_context():
-            return User.create(
-                username=f"st_user{suffix}", email=f"st{suffix}@example.com",
-                created_at=datetime.utcnow()
-            )
-
     def test_total_events_counted(self, client, app):
-        user = self._make_user(app)
+        user = _unique_user(app, "ev_test")
         r = client.post("/api/urls", json={"original_url": "https://ev.example.com", "user_id": user.id})
         client.get(f"/{r.get_json()['short_code']}")
         assert client.get("/api/stats").get_json()["total_events"] >= 2
 
     def test_total_clicks_matches_redirects(self, client, app):
-        user = self._make_user(app, "2")
+        user = _unique_user(app, "clk_test")
         r = client.post("/api/urls", json={"original_url": "https://clk.example.com", "user_id": user.id})
         code = r.get_json()["short_code"]
         client.get(f"/{code}")
@@ -97,7 +97,7 @@ class TestStatsDetailed:
         assert client.get("/api/stats").get_json()["total_clicks"] == 2
 
     def test_top_urls_in_stats(self, client, app):
-        user = self._make_user(app, "3")
+        user = _unique_user(app, "top_test")
         r = client.post("/api/urls", json={"original_url": "https://top.example.com", "user_id": user.id})
         code = r.get_json()["short_code"]
         for _ in range(3):

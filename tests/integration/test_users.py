@@ -2,6 +2,7 @@
 Integration tests for user routes.
 """
 
+import io
 from datetime import datetime
 
 from app.models.user import User
@@ -10,6 +11,11 @@ from app.models.user import User
 def _make_user(app, username="testuser", email="test@example.com"):
     with app.app_context():
         return User.create(username=username, email=email, created_at=datetime.utcnow())
+
+
+def _csv_file(content):
+    """Return (BytesIO, filename) tuple for Flask test client multipart upload."""
+    return (io.BytesIO(content.encode("utf-8")), "users.csv")
 
 
 class TestListUsers:
@@ -111,21 +117,22 @@ class TestBulkCreateUsers:
         csv_data = "username,email\nbulkuser1,bulk1@example.com\nbulkuser2,bulk2@example.com\n"
         r = client.post(
             "/api/users/bulk",
-            data={"file": (csv_data.encode(), "users.csv")},
+            data={"file": _csv_file(csv_data)},
             content_type="multipart/form-data",
         )
         assert r.status_code == 201
-        body = r.get_json()
-        assert body["count"] == 2
+        assert r.get_json()["count"] == 2
 
     def test_bulk_returns_imported_users(self, client):
         csv_data = "username,email\nret_user1,ret1@example.com\n"
         r = client.post(
             "/api/users/bulk",
-            data={"file": (csv_data.encode(), "users.csv")},
+            data={"file": _csv_file(csv_data)},
             content_type="multipart/form-data",
         )
-        assert "imported" in r.get_json()
+        body = r.get_json()
+        assert "imported" in body
+        assert len(body["imported"]) == 1
 
     def test_bulk_no_file_returns_400(self, client):
         r = client.post("/api/users/bulk", data={}, content_type="multipart/form-data")
@@ -136,7 +143,7 @@ class TestBulkCreateUsers:
         csv_data = "username,email\nexisting_bulk,existing_bulk@example.com\nnewbulk,newbulk@example.com\n"
         r = client.post(
             "/api/users/bulk",
-            data={"file": (csv_data.encode(), "users.csv")},
+            data={"file": _csv_file(csv_data)},
             content_type="multipart/form-data",
         )
         assert r.get_json()["count"] == 1

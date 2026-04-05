@@ -1,9 +1,9 @@
 FROM python:3.13-alpine
 
 # psycopg2 must be compiled from source on Alpine (musl libc, no glibc binary wheel)
-RUN apk add --no-cache gcc musl-dev libpq-dev
-
-RUN pip install --no-cache-dir uv
+# Consolidate into one RUN layer to reduce image size
+RUN apk add --no-cache gcc musl-dev libpq-dev && \
+    pip install --no-cache-dir "uv==0.7.2"
 
 WORKDIR /app
 
