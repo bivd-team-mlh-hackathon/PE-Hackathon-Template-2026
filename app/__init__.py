@@ -8,11 +8,13 @@ from app.cache import init_cache
 from app.database import db, init_db
 from app.routes import register_routes
 
-
+from prometheus_flask_exporter import PrometheusMetrics
 def create_app():
     load_dotenv()
 
     app = Flask(__name__)
+    metrics = PrometheusMetrics(app)
+    metrics.info('app_info', 'URL Shortener', version='1.0')
     app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
     init_db(app)
