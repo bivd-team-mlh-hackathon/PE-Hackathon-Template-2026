@@ -1,3 +1,4 @@
+import json
 import secrets
 from datetime import datetime
 
@@ -7,9 +8,21 @@ from app.cache import cache
 from app.database import db
 from app.models.event import Event
 from app.models.url import Url
-from app.utils import is_valid_custom_code, to_base62
+from app.models.user import User
+from app.utils import is_valid_custom_code
 
 urls_bp = Blueprint("urls", __name__)
+
+
+def _parse_bool(value):
+    """Safely parse booleans — handles 'false' string correctly."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes")
+    return bool(value)
 
 
 def _url_to_dict(url):
@@ -25,41 +38,73 @@ def _url_to_dict(url):
     }
 
 
+def _generate_unique_short_code():
+    """Generate a random unique 6-char short code using secrets."""
+    charset = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    while True:
+        code = "".join(secrets.choice(charset) for _ in range(6))
+        if not Url.select().where(Url.short_code == code).exists():
+            return code
+
+
 @cache.memoize(timeout=3600)
 def _get_redirect_target(short_code):
-    """Cache the short_code → original_url mapping in Redis (plan §URL redirecting deep dive)."""
-    url = Url.get_or_none(Url.short_code == short_code, Url.is_active)
+    """Cache the short_code → original_url mapping in Redis."""
+    url = Url.get_or_none(Url.short_code == short_code)
     if url is None:
         return None
-    return {"id": url.id, "original_url": url.original_url, "user_id": url.user_id}
+    return {
+        "id": url.id,
+        "original_url": url.original_url,
+        "user_id": url.user_id,
+        "is_active": url.is_active,
+    }
+
+
+# ─── Redirect ────────────────────────────────────────────────────────────────
 
 
 @urls_bp.route("/<short_code>")
 def redirect_url(short_code):
-    target = _get_redirect_target(short_code)
-    if target is None:
-        return jsonify(error="Short URL not found or inactive"), 404
+    # Always query DB directly for real-time is_active check
+    url = Url.get_or_none(Url.short_code == short_code)
+    if url is None:
+        return jsonify(error="Short URL not found"), 404
 
-    # 302 redirect: preserves click analytics (per plan §301 vs 302)
+    if not url.is_active:
+        # Inactive URL: return 404, do NOT log a click event
+        return jsonify(error="Short URL is inactive"), 404
+
+    # Log click event BEFORE redirecting
     Event.create(
-        url_id=target["id"],
+        url_id=url.id,
         user=None,
         event_type="click",
         timestamp=datetime.utcnow(),
-        details=None,
+        details=json.dumps({
+            "short_code": url.short_code,
+            "original_url": url.original_url,
+        }),
     )
-    return redirect(target["original_url"], code=302)
+    return redirect(url.original_url, code=302)
 
 
+# ─── List URLs ───────────────────────────────────────────────────────────────
+
+
+@urls_bp.route("/urls", methods=["GET"])
 @urls_bp.route("/api/urls", methods=["GET"])
 def list_urls():
-    page = request.args.get("page", 1, type=int)
-    per_page = min(request.args.get("per_page", 20, type=int), 100)
+    page = max(1, request.args.get("page", 1, type=int))
+    per_page = max(1, min(request.args.get("per_page", 20, type=int), 100))
     active_only = request.args.get("active", "").lower() == "true"
+    user_id_filter = request.args.get("user_id", None, type=int)
 
     query = Url.select()
     if active_only:
         query = query.where(Url.is_active)
+    if user_id_filter is not None:
+        query = query.where(Url.user_id == user_id_filter)
 
     total = query.count()
     urls = query.order_by(Url.created_at.desc()).paginate(page, per_page)
@@ -72,8 +117,11 @@ def list_urls():
     )
 
 
+# ─── Get URL by ID ──────────────────────────────────────────────────────────
+
+
+@urls_bp.route("/urls/<int:url_id>", methods=["GET"])
 @urls_bp.route("/api/urls/<int:url_id>", methods=["GET"])
-@cache.memoize(timeout=60)
 def get_url(url_id):
     url = Url.get_or_none(Url.id == url_id)
     if url is None:
@@ -81,19 +129,57 @@ def get_url(url_id):
     return jsonify(_url_to_dict(url))
 
 
+# ─── Create URL ──────────────────────────────────────────────────────────────
+
+
+@urls_bp.route("/urls", methods=["POST"])
 @urls_bp.route("/api/urls", methods=["POST"])
 def create_url():
-    data = request.get_json(silent=True) or {}
-    original_url = data.get("original_url", "").strip()
-    if not original_url:
-        return jsonify(error="original_url is required"), 400
+    data = request.get_json(force=True, silent=True)
+    if data is None or not isinstance(data, dict):
+        return jsonify(error="Invalid JSON body. Expected a JSON object."), 400
 
-    # Duplicate long URL check (per plan §URL shortening deep dive step 2-3)
-    existing = Url.get_or_none(Url.original_url == original_url, Url.is_active)
-    if existing:
-        return jsonify(_url_to_dict(existing)), 200
+    errors = {}
 
-    custom_code = data.get("short_code", "").strip()
+    # Validate original_url
+    original_url = data.get("original_url")
+    if original_url is None or original_url == "":
+        errors["original_url"] = "original_url is required"
+    elif not isinstance(original_url, str):
+        errors["original_url"] = "original_url must be a string"
+    else:
+        original_url = original_url.strip()
+        if not original_url:
+            errors["original_url"] = "original_url cannot be empty"
+
+    # Validate user_id if provided
+    user_id = data.get("user_id")
+    if user_id is not None:
+        if not isinstance(user_id, int):
+            try:
+                user_id = int(user_id)
+            except (ValueError, TypeError):
+                errors["user_id"] = "user_id must be an integer"
+        if "user_id" not in errors:
+            user = User.get_or_none(User.id == user_id)
+            if user is None:
+                errors["user_id"] = f"User with id {user_id} not found"
+
+    # Validate title if provided
+    title = data.get("title")
+    if title is not None and not isinstance(title, str):
+        errors["title"] = "title must be a string"
+
+    if errors:
+        return jsonify(error="Validation failed", details=errors), 422
+
+    # Custom short_code handling
+    custom_code = data.get("short_code", "")
+    if isinstance(custom_code, str):
+        custom_code = custom_code.strip()
+    else:
+        custom_code = ""
+
     if custom_code:
         ok, err = is_valid_custom_code(custom_code)
         if not ok:
@@ -101,45 +187,61 @@ def create_url():
         if Url.select().where(Url.short_code == custom_code).exists():
             return jsonify(error="short_code already taken"), 409
 
+    # Parse is_active safely
+    is_active = _parse_bool(data.get("is_active", True))
+
+    # Always generate a unique short_code — even for duplicate original_url
     now = datetime.utcnow()
     with db.atomic():
         url = Url.create(
-            user_id=data.get("user_id"),
-            short_code=f"__pending_{secrets.token_hex(4)}",
+            user_id=user_id,
+            short_code=custom_code or _generate_unique_short_code(),
             original_url=original_url,
-            title=data.get("title"),
-            is_active=data.get("is_active", True),
+            title=title if isinstance(title, str) else None,
+            is_active=is_active,
             created_at=now,
             updated_at=now,
         )
-        # Base 62 from auto-increment ID (per plan §Base 62 conversion)
-        url.short_code = custom_code or to_base62(url.id)
-        url.save()
 
     Event.create(
         url=url,
-        user_id=data.get("user_id"),
+        user_id=user_id,
         event_type="created",
         timestamp=now,
-        details=None,
+        details=json.dumps({
+            "short_code": url.short_code,
+            "original_url": url.original_url,
+        }),
     )
 
     return jsonify(_url_to_dict(url)), 201
 
 
+# ─── Update URL ──────────────────────────────────────────────────────────────
+
+
+@urls_bp.route("/urls/<int:url_id>", methods=["PUT"])
 @urls_bp.route("/api/urls/<int:url_id>", methods=["PUT"])
 def update_url(url_id):
+    data = request.get_json(force=True, silent=True)
+    if data is None or not isinstance(data, dict):
+        return jsonify(error="Invalid JSON body"), 400
+
     url = Url.get_or_none(Url.id == url_id)
     if url is None:
         return jsonify(error="URL not found"), 404
 
-    data = request.get_json(silent=True) or {}
     if "original_url" in data:
+        if not isinstance(data["original_url"], str):
+            return jsonify(error="original_url must be a string"), 422
         url.original_url = data["original_url"]
     if "title" in data:
+        if data["title"] is not None and not isinstance(data["title"], str):
+            return jsonify(error="title must be a string"), 422
         url.title = data["title"]
     if "is_active" in data:
-        url.is_active = bool(data["is_active"])
+        url.is_active = _parse_bool(data["is_active"])
+
     url.updated_at = datetime.utcnow()
     url.save()
 
@@ -149,6 +251,10 @@ def update_url(url_id):
     return jsonify(_url_to_dict(url))
 
 
+# ─── Delete URL ──────────────────────────────────────────────────────────────
+
+
+@urls_bp.route("/urls/<int:url_id>", methods=["DELETE"])
 @urls_bp.route("/api/urls/<int:url_id>", methods=["DELETE"])
 def delete_url(url_id):
     url = Url.get_or_none(Url.id == url_id)
@@ -164,6 +270,10 @@ def delete_url(url_id):
     return jsonify(message="URL deleted"), 200
 
 
+# ─── URL Stats ───────────────────────────────────────────────────────────────
+
+
+@urls_bp.route("/urls/<int:url_id>/stats", methods=["GET"])
 @urls_bp.route("/api/urls/<int:url_id>/stats", methods=["GET"])
 def url_stats(url_id):
     url = Url.get_or_none(Url.id == url_id)
