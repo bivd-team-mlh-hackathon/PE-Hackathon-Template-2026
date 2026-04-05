@@ -7,7 +7,6 @@ from app.cache import cache
 from app.database import db
 from app.models.event import Event
 from app.models.url import Url
-from app.models.user import User
 from app.utils import is_valid_custom_code, to_base62
 
 urls_bp = Blueprint("urls", __name__)
@@ -28,7 +27,6 @@ def _url_to_dict(url):
 
 @cache.memoize(timeout=3600)
 def _get_redirect_target(short_code):
-    """Cache the short_code → original_url mapping in Redis (plan §URL redirecting deep dive)."""
     url = Url.get_or_none(Url.short_code == short_code)
     if url is None:
         return None
@@ -46,11 +44,10 @@ def redirect_url(short_code):
     if target is None:
         return jsonify(error="URL not found"), 404
 
-    # The Slumbering Guide: dormant routes offer no passage and leave no footprint.
+    # The Slumbering Guide: inactive URL returns 404 and logs NO event.
     if not target["is_active"]:
-        return jsonify({"error": "This URL has been deactivated"}), 410
+        return jsonify(error="URL is inactive"), 404
 
-    # 302 redirect: preserves click analytics (per plan §301 vs 302)
     Event.create(
         url_id=target["id"],
         user=None,
@@ -61,13 +58,16 @@ def redirect_url(short_code):
     return redirect(target["original_url"], code=302)
 
 
-@urls_bp.route("/urls", methods=["GET"])
+@urls_bp.route("/api/urls", methods=["GET"])
 def list_urls():
     page = request.args.get("page", 1, type=int)
     per_page = min(request.args.get("per_page", 20, type=int), 100)
+    user_id = request.args.get("user_id", type=int)
     active_only = request.args.get("active", "").lower() == "true"
 
     query = Url.select()
+    if user_id is not None:
+        query = query.where(Url.user == user_id)
     if active_only:
         query = query.where(Url.is_active)
 
@@ -82,7 +82,7 @@ def list_urls():
     )
 
 
-@urls_bp.route("/urls/<int:url_id>", methods=["GET"])
+@urls_bp.route("/api/urls/<int:url_id>", methods=["GET"])
 @cache.memoize(timeout=60)
 def get_url(url_id):
     url = Url.get_or_none(Url.id == url_id)
@@ -91,30 +91,21 @@ def get_url(url_id):
     return jsonify(_url_to_dict(url))
 
 
-@urls_bp.route("/urls", methods=["POST"])
+@urls_bp.route("/api/urls", methods=["POST"])
 def create_url():
+    # The Fractured Vessel: must be a JSON object, not a string or array.
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
-        return jsonify(error="Payload must be a JSON object"), 400
+        return jsonify(error="Request body must be a JSON object"), 400
 
     original_url = data.get("original_url")
-    user_id = data.get("user_id")
-
-    if not original_url or not user_id:
-        return jsonify(error="original_url and user_id are required"), 400
-    if not isinstance(user_id, int):
-        return jsonify(error="user_id must be an integer"), 400
-    if not isinstance(original_url, str):
-        return jsonify(error="original_url must be a string"), 400
-
+    if not isinstance(original_url, str) or not original_url.strip():
+        return jsonify(error="original_url is required"), 400
     original_url = original_url.strip()
-
-    if not User.get_or_none(User.id == user_id):
-        return jsonify(error="User not found"), 400
 
     custom_code = data.get("short_code", "")
     if custom_code:
-        custom_code = custom_code.strip()
+        custom_code = str(custom_code).strip()
         ok, err = is_valid_custom_code(custom_code)
         if not ok:
             return jsonify(error=err), 400
@@ -123,6 +114,7 @@ def create_url():
 
     now = datetime.utcnow()
     with db.atomic():
+        # The Twin's Paradox: every creation gets its own distinct short code.
         url = Url.create(
             user_id=data.get("user_id"),
             short_code=f"__pending_{secrets.token_hex(4)}",
@@ -132,7 +124,6 @@ def create_url():
             created_at=now,
             updated_at=now,
         )
-        # Base 62 from auto-increment ID (per plan §Base 62 conversion)
         url.short_code = custom_code or to_base62(url.id)
         url.save()
 
@@ -147,7 +138,7 @@ def create_url():
     return jsonify(_url_to_dict(url)), 201
 
 
-@urls_bp.route("/urls/<int:url_id>", methods=["PUT"])
+@urls_bp.route("/api/urls/<int:url_id>", methods=["PUT"])
 def update_url(url_id):
     url = Url.get_or_none(Url.id == url_id)
     if url is None:
@@ -169,7 +160,7 @@ def update_url(url_id):
     return jsonify(_url_to_dict(url))
 
 
-@urls_bp.route("/urls/<int:url_id>", methods=["DELETE"])
+@urls_bp.route("/api/urls/<int:url_id>", methods=["DELETE"])
 def delete_url(url_id):
     url = Url.get_or_none(Url.id == url_id)
     if url is None:
@@ -184,7 +175,7 @@ def delete_url(url_id):
     return jsonify(message="URL deleted"), 200
 
 
-@urls_bp.route("/urls/<int:url_id>/stats", methods=["GET"])
+@urls_bp.route("/api/urls/<int:url_id>/stats", methods=["GET"])
 def url_stats(url_id):
     url = Url.get_or_none(Url.id == url_id)
     if url is None:

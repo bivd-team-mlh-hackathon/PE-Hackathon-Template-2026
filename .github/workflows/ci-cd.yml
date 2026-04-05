@@ -150,12 +150,12 @@ jobs:
             # only the app is recreated because its image changed.
             docker compose -f docker-compose.1gb.yml up -d
 
-            # ── Health check — port 5000 (app direct, no nginx needed) ────
+            # ── Health check — port 80 via nginx ─────────────────────────
             # Allow up to 3 minutes: first deploy seeds DB with Faker which
             # takes ~60s on a 1vCPU droplet.
             echo "Waiting for app to become healthy..."
             for i in $(seq 1 36); do
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/health || true)
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/health || true)
               if [ "$STATUS" = "200" ]; then
                 echo "Health check passed (attempt $i)"
                 break

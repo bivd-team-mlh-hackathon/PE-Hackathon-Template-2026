@@ -39,3 +39,6 @@ scripts/.env.local
 # Judging (not visible to participants)
 judging/
 frontend/
+
+# Frontend templates (removed — API-only)
+app/templates/

@@ -15,7 +15,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "ruff>=0.8",
     "pytest>=8.0",
     "pytest-cov>=6.0",
 ]
@@ -23,5 +22,4 @@ dev = [
 [tool.coverage.run]
 omit = [
     "app/seed.py",
-    "app/routes/frontend.py"
 ]

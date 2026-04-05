@@ -1,5 +1,5 @@
 """
-Integration tests for user routes — /api/users and frontend /users pages.
+Integration tests for user routes.
 """
 
 from datetime import datetime
@@ -12,21 +12,16 @@ def _make_user(app, username="testuser", email="test@example.com"):
         return User.create(username=username, email=email, created_at=datetime.utcnow())
 
 
-# ── User API ──────────────────────────────────────────────────────────────────
-
-
 class TestListUsers:
     def test_empty_returns_200(self, client):
-        r = client.get("/api/users")
-        assert r.status_code == 200
+        assert client.get("/api/users").status_code == 200
 
     def test_empty_total_is_zero(self, client):
         assert client.get("/api/users").get_json()["total"] == 0
 
     def test_returns_created_user(self, client, app):
         _make_user(app)
-        r = client.get("/api/users")
-        body = r.get_json()
+        body = client.get("/api/users").get_json()
         assert body["total"] == 1
         assert body["users"][0]["username"] == "testuser"
 
@@ -36,8 +31,7 @@ class TestListUsers:
         assert body["per_page"] == 5
 
     def test_per_page_capped_at_100(self, client):
-        body = client.get("/api/users?per_page=999").get_json()
-        assert body["per_page"] == 100
+        assert client.get("/api/users?per_page=999").get_json()["per_page"] == 100
 
     def test_multiple_users(self, client, app):
         _make_user(app, "alice", "alice@example.com")
@@ -48,8 +42,7 @@ class TestListUsers:
 class TestGetUser:
     def test_returns_200(self, client, app):
         user = _make_user(app)
-        r = client.get(f"/api/users/{user.id}")
-        assert r.status_code == 200
+        assert client.get(f"/api/users/{user.id}").status_code == 200
 
     def test_returns_correct_fields(self, client, app):
         user = _make_user(app)
@@ -61,18 +54,11 @@ class TestGetUser:
 
     def test_urls_list_initially_empty(self, client, app):
         user = _make_user(app)
-        body = client.get(f"/api/users/{user.id}").get_json()
-        assert body["urls"] == []
+        assert client.get(f"/api/users/{user.id}").get_json()["urls"] == []
 
     def test_includes_associated_urls(self, client, app):
         user = _make_user(app)
-        client.post(
-            "/api/urls",
-            json={
-                "original_url": "https://user-url.example.com",
-                "user_id": user.id,
-            },
-        )
+        client.post("/api/urls", json={"original_url": "https://user-url.example.com", "user_id": user.id})
         body = client.get(f"/api/users/{user.id}").get_json()
         assert len(body["urls"]) == 1
         assert body["urls"][0]["original_url"] == "https://user-url.example.com"
@@ -81,23 +67,76 @@ class TestGetUser:
         assert client.get("/api/users/999999").status_code == 404
 
 
-# ── Frontend user pages ────────────────────────────────────────────────────────
+class TestCreateUser:
+    def test_create_returns_201(self, client):
+        r = client.post("/api/users", json={"username": "newuser", "email": "new@example.com"})
+        assert r.status_code == 201
+
+    def test_create_returns_user_fields(self, client):
+        r = client.post("/api/users", json={"username": "fields_user", "email": "fields@example.com"})
+        body = r.get_json()
+        assert body["username"] == "fields_user"
+        assert body["email"] == "fields@example.com"
+        assert "id" in body
+
+    def test_unwitting_stranger_integer_username_rejected(self, client):
+        """The Unwitting Stranger: integer username must be rejected."""
+        r = client.post("/api/users", json={"username": 12345, "email": "int@example.com"})
+        assert r.status_code == 400
+
+    def test_unwitting_stranger_missing_email_rejected(self, client):
+        r = client.post("/api/users", json={"username": "noemail"})
+        assert r.status_code == 400
+
+    def test_unwitting_stranger_invalid_email_rejected(self, client):
+        r = client.post("/api/users", json={"username": "bademail", "email": "notanemail"})
+        assert r.status_code == 400
+
+    def test_duplicate_username_returns_409(self, client):
+        client.post("/api/users", json={"username": "dup", "email": "dup1@example.com"})
+        r = client.post("/api/users", json={"username": "dup", "email": "dup2@example.com"})
+        assert r.status_code == 409
+
+    def test_fractured_vessel_string_body_rejected(self, client):
+        r = client.post("/api/users", data='"just a string"', content_type="application/json")
+        assert r.status_code == 400
+
+    def test_empty_body_rejected(self, client):
+        r = client.post("/api/users", json={})
+        assert r.status_code == 400
 
 
-class TestUserFrontend:
-    def test_users_list_page_ok(self, client):
-        assert client.get("/users").status_code == 200
+class TestBulkCreateUsers:
+    def test_bulk_import_csv(self, client):
+        csv_data = "username,email\nbulkuser1,bulk1@example.com\nbulkuser2,bulk2@example.com\n"
+        r = client.post(
+            "/api/users/bulk",
+            data={"file": (csv_data.encode(), "users.csv")},
+            content_type="multipart/form-data",
+        )
+        assert r.status_code == 201
+        body = r.get_json()
+        assert body["count"] == 2
 
-    def test_users_list_shows_user(self, client, app):
-        _make_user(app, "visibleuser", "v@example.com")
-        r = client.get("/users")
-        assert b"visibleuser" in r.data
+    def test_bulk_returns_imported_users(self, client):
+        csv_data = "username,email\nret_user1,ret1@example.com\n"
+        r = client.post(
+            "/api/users/bulk",
+            data={"file": (csv_data.encode(), "users.csv")},
+            content_type="multipart/form-data",
+        )
+        assert "imported" in r.get_json()
 
-    def test_user_detail_page_ok(self, client, app):
-        user = _make_user(app)
-        r = client.get(f"/users/{user.id}")
-        assert r.status_code == 200
+    def test_bulk_no_file_returns_400(self, client):
+        r = client.post("/api/users/bulk", data={}, content_type="multipart/form-data")
+        assert r.status_code == 400
 
-    def test_user_detail_redirects_on_missing(self, client):
-        r = client.get("/users/999999", follow_redirects=True)
-        assert r.status_code == 200
+    def test_bulk_skips_duplicates(self, client, app):
+        _make_user(app, "existing_bulk", "existing_bulk@example.com")
+        csv_data = "username,email\nexisting_bulk,existing_bulk@example.com\nnewbulk,newbulk@example.com\n"
+        r = client.post(
+            "/api/users/bulk",
+            data={"file": (csv_data.encode(), "users.csv")},
+            content_type="multipart/form-data",
+        )
+        assert r.get_json()["count"] == 1

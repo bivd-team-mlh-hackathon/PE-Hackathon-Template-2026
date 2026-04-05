@@ -1,15 +1,17 @@
 import csv
+import io
+import re
 from datetime import datetime
-from io import StringIO
 
 from flask import Blueprint, jsonify, request
-from peewee import chunked
 
 from app.database import db
 from app.models.url import Url
 from app.models.user import User
 
 users_bp = Blueprint("users", __name__)
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _user_to_dict(user):
@@ -21,7 +23,7 @@ def _user_to_dict(user):
     }
 
 
-@users_bp.route("/users", methods=["GET"])
+@users_bp.route("/api/users", methods=["GET"])
 def list_users():
     page = request.args.get("page", 1, type=int)
     per_page = min(request.args.get("per_page", 20, type=int), 100)
@@ -37,7 +39,7 @@ def list_users():
     )
 
 
-@users_bp.route("/users/<int:user_id>", methods=["GET"])
+@users_bp.route("/api/users/<int:user_id>", methods=["GET"])
 def get_user(user_id):
     user = User.get_or_none(User.id == user_id)
     if user is None:
@@ -59,34 +61,72 @@ def get_user(user_id):
     return jsonify(result)
 
 
-@users_bp.route("/users/bulk", methods=["POST"])
-def bulk_load_users():
+@users_bp.route("/api/users", methods=["POST"])
+def create_user():
+    # The Fractured Vessel: must be a JSON object
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(error="Request body must be a JSON object"), 400
+
+    # The Unwitting Stranger: validate types and required fields
+    username = data.get("username")
+    email = data.get("email")
+
+    if not isinstance(username, str) or not username.strip():
+        return jsonify(error="username is required and must be a non-empty string"), 400
+    if not isinstance(email, str) or not email.strip():
+        return jsonify(error="email is required and must be a non-empty string"), 400
+
+    username = username.strip()
+    email = email.strip()
+
+    if not _EMAIL_RE.match(email):
+        return jsonify(error="email is invalid"), 400
+
+    if User.select().where(User.username == username).exists():
+        return jsonify(error="username already taken"), 409
+    if User.select().where(User.email == email).exists():
+        return jsonify(error="email already registered"), 409
+
+    user = User.create(username=username, email=email, created_at=datetime.utcnow())
+    return jsonify(_user_to_dict(user)), 201
+
+
+@users_bp.route("/api/users/bulk", methods=["POST"])
+def bulk_create_users():
+    """Bulk import users from a CSV file (multipart/form-data, field: file)."""
     if "file" not in request.files:
-        return jsonify(error="No file part"), 400
+        return jsonify(error="multipart field 'file' is required"), 400
+
     file = request.files["file"]
-    if file.filename == "":
-        return jsonify(error="No selected file"), 400
+    if not file.filename:
+        return jsonify(error="No file selected"), 400
 
     try:
-        stream = StringIO(file.stream.read().decode("UTF8"), newline=None)
-        reader = csv.DictReader(stream)
-        rows = list(reader)
+        content = file.read().decode("utf-8")
+    except Exception:
+        return jsonify(error="Could not decode file as UTF-8"), 400
 
-        data = []
-        for r in rows:
-            data.append(
-                {
-                    "id": int(r["id"]) if r.get("id") else None,
-                    "username": r["username"],
-                    "email": r["email"],
-                    "created_at": r.get("created_at") or datetime.utcnow().isoformat(),
-                }
-            )
+    reader = csv.DictReader(io.StringIO(content))
+    if reader.fieldnames is None or not {"username", "email"}.issubset(
+        {f.strip() for f in reader.fieldnames}
+    ):
+        return jsonify(error="CSV must have 'username' and 'email' columns"), 400
 
-        with db.atomic():
-            for batch in chunked(data, 100):
-                User.insert_many(batch).execute()
+    imported = []
+    now = datetime.utcnow()
+    with db.atomic():
+        for row in reader:
+            username = (row.get("username") or "").strip()
+            email = (row.get("email") or "").strip()
+            if not username or not email or not _EMAIL_RE.match(email):
+                continue
+            if (
+                User.select().where(User.username == username).exists()
+                or User.select().where(User.email == email).exists()
+            ):
+                continue
+            user = User.create(username=username, email=email, created_at=now)
+            imported.append(_user_to_dict(user))
 
-        return jsonify(count=len(data)), 201
-    except Exception as e:
-        return jsonify(error=str(e)), 400
+    return jsonify(count=len(imported), imported=imported), 201
