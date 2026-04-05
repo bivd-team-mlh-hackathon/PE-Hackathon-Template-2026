@@ -9,4 +9,3 @@ def register_routes(app):
     app.register_blueprint(users_bp)
     app.register_blueprint(events_bp)
     app.register_blueprint(stats_bp)
-    app.register_blueprint(events_bp)
